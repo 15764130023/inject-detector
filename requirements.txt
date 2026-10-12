@@ -1,0 +1,9 @@
+# Core agent and UI dependencies (initial reproducible baseline).
+openai-agents==0.23.1
+streamlit==1.65.0
+python-dotenv==1.2.4
+PyYAML==6.0.3
+
+# Development and test dependencies
+pytest==9.1.1
+

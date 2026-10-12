@@ -1,0 +1,2 @@
+"""Prompt-injection detector adapter."""
+

@@ -413,6 +413,8 @@ def run_office_task(
                 )
             )
     except SummaryError as exc:
+        if exc.tool_calls:
+            tool_calls = exc.tool_calls
         steps.append(WorkflowStep("agent_reasoning", "failed", exc.message))
         return _failed_result(
             trace_id=trace_id,

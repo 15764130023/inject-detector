@@ -130,6 +130,25 @@ def test_dashscope_mode_binds_local_tools_to_office_agent(
     assert run_sync.call_args.kwargs["max_turns"] == 5
 
 
+def test_dashscope_runtime_error_is_reported_without_masking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key-not-used")
+
+    with patch("agents.Runner.run_sync", side_effect=RuntimeError("executor stopped")):
+        result = run_office_task(
+            "请搜索项目资料，并生成摘要。",
+            mode="dashscope",
+            registry=ToolRegistry(audit_path=tmp_path / "events.jsonl"),
+        )
+
+    assert result.ok is False
+    assert result.error == {
+        "code": "DASHSCOPE_AGENT_ERROR",
+        "message": "在线智能体运行失败：executor stopped",
+    }
+
+
 def test_empty_user_task_is_rejected_without_tool_call(tmp_path: Path) -> None:
     audit_path = tmp_path / "events.jsonl"
 

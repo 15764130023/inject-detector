@@ -2,8 +2,12 @@
 
 首版工具只操作 `scenarios/` 内的模拟数据。业务调用统一经过 `ToolRegistry.invoke()`，由注册层补充 `trace_id`、`call_id`、参数来源和来源检测结果，在执行前完成策略判断并写入 JSONL 审计事件。
 
-`argument_sources` 按参数记录 `source_id`、`source_type`、`trusted` 和
-`parent_source_id`；`detection_results` 按 `source_id` 提供检测标签与分数。
+`argument_sources` 按参数记录 `source_id`、`source_type`、`trusted` 和可选的
+`parent_source_id`。模型无法确定单一直接来源时，还会记录
+`attribution=mixed_or_unknown` 与 `candidate_source_ids`；候选来源只用于审计说明，
+不会被策略当作已经确认的注入来源。参数确实包含先前工具返回的完整内容时，
+`source_id` 指向对应的 `tool_result:<call_id>`。`detection_results` 按
+`source_id` 提供检测标签与分数。
 策略决定会回传 `risk_factors`、`source_ids`、`max_detection_label` 和
 `max_detection_score`，用于解释来源如何影响最终决定。
 

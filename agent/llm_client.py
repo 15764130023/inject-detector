@@ -198,12 +198,7 @@ def run_office_agent_with_tools(
         Only files inside the sandbox directory are accessible.
         """
         arguments = {"path": path}
-        sources = tracker.argument_sources(path="user_task")
-        # 模型从不可信文档中读到路径，这里把来源标记为不可信模型推理。
-        sources = {
-            "path": {"source_id": "model_inferred", "source_type": "model_inference",
-                     "trusted": False}
-        }
+        sources = _model_sources(path=path)
         result = registry.invoke(
             "read_file",
             arguments,
@@ -228,11 +223,7 @@ def run_office_agent_with_tools(
     def send_email_tool(to: str, subject: str, body: str) -> str:
         """Append a simulated email message to the local outbox (no network send)."""
         arguments = {"to": to, "subject": subject, "body": body}
-        sources = {
-            name: {"source_id": "model_inferred", "source_type": "model_inference",
-                   "trusted": False}
-            for name in arguments
-        }
+        sources = _model_sources(to=to, subject=subject, body=body)
         result = registry.invoke(
             "send_email",
             arguments,
@@ -249,11 +240,33 @@ def run_office_agent_with_tools(
         error = result.get("error", {})
         return f"邮件发送失败：{error.get('code', 'ERROR')} - {error.get('message', '')}"
 
+    # 找出被检测器标记为 INJECTION 的文档，作为模型推理参数的父来源。
+    # 这样策略引擎沿 parent_source_id 链能查到这份文档的检测标签，
+    # 即使模型没有显式说"我是从哪份文档看到的"。
+    injection_parent = next(
+        (
+            sid for sid, det in detection_context.items()
+            if isinstance(det, dict) and det.get("label") == "INJECTION"
+        ),
+        "user_task",
+    )
+
+    def _model_sources(**names: str) -> dict[str, dict[str, Any]]:
+        return {
+            name: {
+                "source_id": "model_inferred",
+                "source_type": "model_inference",
+                "trusted": False,
+                "parent_source_id": injection_parent,
+            }
+            for name in names
+        }
+
     # 在 provenance 中注册模型推理节点，作为不可信参数来源的父节点。
     try:
         tracker.add_source(
             "model_inferred", "model_inference", trusted=False,
-            parent_source_id="user_task",
+            parent_source_id=injection_parent,
         )
     except ValueError:
         pass  # 已经注册过

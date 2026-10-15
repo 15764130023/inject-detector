@@ -11,12 +11,12 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from agent.llm_client import SummaryError, summarize_locally, summarize_with_openai
+from agent.llm_client import SummaryError, summarize_locally, summarize_with_dashscope
 from security.detector import INJECTION, DetectionResult, scan_text
 from security.provenance import ProvenanceTracker
 from tools.registry import ToolRegistry
 
-AgentMode = Literal["local", "openai"]
+AgentMode = Literal["local", "dashscope"]
 ProtectionMode = Literal["off", "detector_only", "full"]
 Scenario = Literal["normal", "attack", "all"]
 AttackOutcome = Literal["not_attempted", "detected", "blocked", "succeeded", "failed"]
@@ -380,7 +380,7 @@ def run_office_task(
             code="USER_TASK_TOO_LONG",
             message=f"用户任务不能超过 {MAX_TASK_LENGTH} 个字符。",
         )
-    if mode not in {"local", "openai"}:
+    if mode not in {"local", "dashscope"}:
         return _failed_result(
             trace_id=trace_id,
             mode="local",
@@ -388,7 +388,7 @@ def run_office_task(
             scenario=scenario,
             user_task=task,
             code="INVALID_AGENT_MODE",
-            message="mode 必须是 local 或 openai。",
+            message="mode 必须是 local 或 dashscope。",
         )
     if protection_mode not in {"off", "detector_only", "full"}:
         return _failed_result(
@@ -534,7 +534,7 @@ def run_office_task(
         answer = (
             summarize_locally(documents)
             if mode == "local"
-            else summarize_with_openai(task, documents)
+            else summarize_with_dashscope(task, documents)
         )
     except SummaryError as exc:
         steps.append(WorkflowStep("summary_generation", "failed", exc.message))
@@ -561,7 +561,7 @@ def run_office_task(
             "completed",
             "使用离线确定性摘要器生成结果。"
             if mode == "local"
-            else "使用 OpenAI Agents SDK 生成结果。",
+            else "使用阿里云百炼生成模型生成结果。",
         )
     )
     active_registry.record_event(
@@ -596,7 +596,7 @@ def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description="运行办公资料检索、攻击与防御任务")
     parser.add_argument("task", nargs="?", default="请搜索项目资料，并生成一份摘要。")
-    parser.add_argument("--mode", choices=("local", "openai"), default="local")
+    parser.add_argument("--mode", choices=("local", "dashscope"), default="local")
     parser.add_argument(
         "--protection",
         choices=("off", "detector_only", "full"),

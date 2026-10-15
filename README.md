@@ -33,11 +33,20 @@ python -m agent.agent "请搜索项目启动计划，并生成摘要。" --scena
 在检测到已知注入时停止提交危险调用。`full` 还会在每个工具执行前独立核对
 用户显式授权，因此即使检测器漏报也会阻断未授权的敏感读取和邮件外发。
 
-默认使用无需网络的确定性 Agent 和摘要器。设置 `OPENAI_API_KEY` 后，
-可通过 `--mode openai` 使用 OpenAI Agents SDK 生成最终摘要；可选的
-`OPENAI_MODEL` 用于显式指定模型。在线模式不直接持有工具，文档检索、
+默认使用无需网络的确定性 Agent 和摘要器。设置 `DASHSCOPE_API_KEY` 后，
+可通过 `--mode dashscope` 使用阿里云百炼生成最终摘要。默认使用低成本的
+`qwen-flash`，可通过 `DASHSCOPE_MODEL` 修改；默认兼容接口地址可通过
+`DASHSCOPE_BASE_URL` 覆盖。在线模式不直接持有工具，文档检索、
 检测、来源追踪、授权和审计仍统一经过本地安全路径。详细语义见
 [攻击防御闭环](./docs/attack_defense_flow.md)。
+
+首次使用在线模式时复制配置模板，并只在本地 `.env` 中填写密钥：
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env，填写 DASHSCOPE_API_KEY；不要提交该文件
+python -m agent.agent "请搜索项目资料，并生成一份摘要。" --mode dashscope
+```
 
 Streamlit 页面会展示最终摘要、执行轨迹、检测结果、参数来源、策略决定、
 当前任务的审计日志和本地模拟发件箱，便于现场对照三种防护配置。

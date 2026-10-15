@@ -1,4 +1,4 @@
-"""Online Agents SDK summarizer and deterministic local fallback."""
+"""DashScope-backed Agents SDK summarizer and deterministic local fallback."""
 
 from __future__ import annotations
 
@@ -23,6 +23,9 @@ _SUSPICIOUS_MARKERS = (
     "secret.txt",
     "attacker@example.com",
 )
+
+DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_DASHSCOPE_MODEL = "qwen-flash"
 
 
 class SummaryError(RuntimeError):
@@ -78,27 +81,35 @@ def summarize_locally(documents: Sequence[Mapping[str, object]]) -> str:
     return "\n".join(lines)
 
 
-def summarize_with_openai(
+def summarize_with_dashscope(
     user_task: str,
     documents: list[dict[str, object]],
 ) -> str:
-    """Generate a summary with one OpenAI Agents SDK run."""
+    """Generate a summary through DashScope's OpenAI-compatible endpoint."""
 
-    if not os.getenv("OPENAI_API_KEY", "").strip():
-        raise SummaryError("OPENAI_API_KEY_MISSING", "在线模式需要设置 OPENAI_API_KEY。")
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        raise SummaryError(
+            "DASHSCOPE_API_KEY_MISSING",
+            "阿里云百炼模式需要设置 DASHSCOPE_API_KEY。",
+        )
 
-    from agents import Agent, Runner
+    from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
     from agents.exceptions import AgentsException
-    from openai import OpenAIError
+    from openai import AsyncOpenAI, OpenAIError
 
-    agent_kwargs: dict[str, object] = {
-        "name": "Office document summarizer",
-        "instructions": SUMMARY_AGENT_INSTRUCTIONS,
-    }
-    configured_model = os.getenv("OPENAI_MODEL", "").strip()
-    if configured_model:
-        agent_kwargs["model"] = configured_model
-    summary_agent = Agent(**agent_kwargs)
+    base_url = os.getenv("DASHSCOPE_BASE_URL", "").strip() or DEFAULT_DASHSCOPE_BASE_URL
+    model_name = os.getenv("DASHSCOPE_MODEL", "").strip() or DEFAULT_DASHSCOPE_MODEL
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    model = OpenAIChatCompletionsModel(model=model_name, openai_client=client)
+
+    # DashScope does not accept OpenAI tracing traffic. Local audit remains enabled.
+    set_tracing_disabled(disabled=True)
+    summary_agent = Agent(
+        name="Office document summarizer",
+        instructions=SUMMARY_AGENT_INSTRUCTIONS,
+        model=model,
+    )
 
     try:
         result = Runner.run_sync(
@@ -107,7 +118,7 @@ def summarize_with_openai(
             max_turns=2,
         )
     except (AgentsException, OpenAIError) as exc:
-        raise SummaryError("OPENAI_SUMMARY_ERROR", f"在线摘要失败：{exc}") from exc
+        raise SummaryError("DASHSCOPE_SUMMARY_ERROR", f"阿里云百炼摘要失败：{exc}") from exc
 
     final_output = str(result.final_output).strip()
     if not final_output:

@@ -81,33 +81,37 @@ def test_no_match_is_a_successful_task_with_clear_answer(tmp_path: Path) -> None
     assert "没有检索到" in result.answer
 
 
-def test_openai_mode_without_key_returns_explicit_error(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_dashscope_mode_without_key_returns_explicit_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
 
     result = run_office_task(
         "请搜索项目资料，并生成摘要。",
-        mode="openai",
+        mode="dashscope",
         registry=ToolRegistry(audit_path=tmp_path / "events.jsonl"),
     )
 
     assert result.ok is False
     assert result.error == {
-        "code": "OPENAI_API_KEY_MISSING",
-        "message": "在线模式需要设置 OPENAI_API_KEY。",
+        "code": "DASHSCOPE_API_KEY_MISSING",
+        "message": "阿里云百炼模式需要设置 DASHSCOPE_API_KEY。",
     }
 
 
-def test_openai_mode_uses_agents_sdk_runner_without_exposing_tools(
+def test_dashscope_mode_uses_compatible_client_without_exposing_tools(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key-not-used")
+    monkeypatch.delenv("DASHSCOPE_MODEL", raising=False)
+    monkeypatch.setenv("DASHSCOPE_BASE_URL", "https://example.test/compatible-mode/v1")
     with patch(
         "agents.Runner.run_sync",
         return_value=SimpleNamespace(final_output="在线摘要结果"),
     ) as run_sync:
         result = run_office_task(
             "请搜索项目资料，并生成摘要。",
-            mode="openai",
+            mode="dashscope",
             registry=ToolRegistry(audit_path=tmp_path / "events.jsonl"),
         )
 
@@ -115,6 +119,8 @@ def test_openai_mode_uses_agents_sdk_runner_without_exposing_tools(
     assert result.answer == "在线摘要结果"
     summary_agent = run_sync.call_args.args[0]
     assert summary_agent.tools == []
+    assert summary_agent.model.model == "qwen-flash"
+    assert str(summary_agent.model._client.base_url) == "https://example.test/compatible-mode/v1/"
     assert run_sync.call_args.kwargs["max_turns"] == 2
 
 

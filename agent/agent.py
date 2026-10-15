@@ -447,6 +447,7 @@ def run_office_task(
         "agent_task_completed",
         {
             "scenario": scenario,
+            "agent_mode": mode,
             "protection_mode": protection_mode,
             "attack_outcome": attack_outcome,
             "document_count": len(documents),

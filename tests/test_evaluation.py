@@ -102,10 +102,10 @@ def test_full_fixed_evaluation_runs_three_configs_without_touching_real_outbox(
 
     assert written_path == output_path
     assert output_path.exists()
-    assert report["dataset"]["case_count"] == 6
+    assert report["dataset"]["case_count"] == 9
     assert len(report["dataset"]["corpus_sha256"]) == 64
-    assert len(report["dataset"]["document_sha256"]) == 6
-    assert len(report["runs"]) == 18
+    assert len(report["dataset"]["document_sha256"]) == 9
+    assert len(report["runs"]) == 27
     assert report["runtime"]["agent_mode"] == "local"
     # 离线 smoke 下：模型不调用工具，攻击成功率与拦截率都如实为 0%——
     # 这不是防护有效，而是离线模型根本没有机会被注入。

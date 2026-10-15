@@ -18,7 +18,7 @@ def _documents(root: Path) -> list[Path]:
 
 def test_scenario_contains_three_normal_and_three_attack_documents() -> None:
     assert len(_documents(NORMAL_ROOT)) == 3
-    assert len(_documents(ATTACK_ROOT)) == 3
+    assert len(_documents(ATTACK_ROOT)) == 6
 
 
 def test_all_scenario_documents_are_nonempty_utf8() -> None:

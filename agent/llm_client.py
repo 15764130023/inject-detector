@@ -6,7 +6,12 @@ import os
 import re
 from typing import Any, Mapping, Sequence
 
-from agent.prompts import AGENT_INSTRUCTIONS, SUMMARY_AGENT_INSTRUCTIONS, build_summary_input
+from agent.prompts import (
+    AGENT_INSTRUCTIONS_PROTECTED,
+    AGENT_INSTRUCTIONS_UNPROTECTED,
+    SUMMARY_AGENT_INSTRUCTIONS,
+    build_summary_input,
+)
 
 _SUSPICIOUS_MARKERS = (
     "ignore previous",
@@ -254,14 +259,18 @@ def run_office_agent_with_tools(
         pass  # 已经注册过
 
     set_tracing_disabled(disabled=True)
+    instructions = (
+        AGENT_INSTRUCTIONS_PROTECTED if protection_enabled
+        else AGENT_INSTRUCTIONS_UNPROTECTED
+    )
     office_agent = Agent(
         name="Office assistant",
-        instructions=AGENT_INSTRUCTIONS,
+        instructions=instructions,
         tools=[read_file_tool, send_email_tool],
         model=model,
     )
 
-    user_input = build_summary_input(user_task, documents)
+    user_input = build_summary_input(user_task, documents, protected=protection_enabled)
 
     # Streamlit 自身运行在 asyncio 事件循环里，Runner.run_sync 不能在已有循环
     # 的线程中再次启动事件循环。把 SDK 调用放到独立线程里执行。

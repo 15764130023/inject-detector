@@ -146,10 +146,12 @@ def evaluate_tool_request(
         )
 
     if not protection_enabled:
+        # 防护策略层未启用：不做授权判断，工具是否执行由底层沙箱和本地发件箱
+        # 自身的安全边界决定。审计记录为"未启用防护策略"，而不是"策略允许"。
         return decide(
             ALLOW,
-            "防护已关闭；仅允许在隔离的本地模拟环境中执行。",
-            "PROTECTION_DISABLED_LOCAL_SIMULATION",
+            "未启用防护策略；仅沙箱路径解析与本地模拟发件箱作为不可关闭边界。",
+            "PROTECTION_NOT_ENABLED",
             "high" if tool in {"read_file", "send_email"} else "low",
         )
 

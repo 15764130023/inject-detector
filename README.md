@@ -28,16 +28,20 @@ python -m agent.agent "请搜索项目启动计划，并生成摘要。" --scena
 python -m agent.agent "请搜索项目启动计划，并生成摘要。" --scenario attack --protection full
 ```
 
-防护配置有 `off`、`detector_only` 和 `full` 三种。`off` 只能用于本地隔离
-对照；即使关闭防护，文件沙箱和模拟发件箱边界仍然生效。`detector_only`
-在检测到已知注入时停止提交危险调用。`full` 还会在每个工具执行前独立核对
-用户显式授权，因此即使检测器漏报也会阻断未授权的敏感读取和邮件外发。
+防护配置有 `off`、`detector_only` 和 `full` 三种。`off` 与 `detector_only`
+下策略层不做授权判断，审计记录为"未启用防护策略"（`PROTECTION_NOT_ENABLED`），
+而不是"策略允许"；即使关闭防护，文件沙箱和模拟发件箱边界仍然生效。`detector_only`
+会运行注入扫描但不阻断工具调用——这一档对照说明"光检测不够"。`full` 还会在每个
+工具执行前独立核对用户显式授权，因此即使检测器漏报也会阻断未授权的敏感读取和邮件外发。
 
-默认使用无需网络的确定性 Agent 和摘要器。设置 `DASHSCOPE_API_KEY` 后，
-可通过 `--mode dashscope` 使用阿里云百炼生成最终摘要。默认使用低成本的
-`qwen-flash`，可通过 `DASHSCOPE_MODEL` 修改；默认兼容接口地址可通过
-`DASHSCOPE_BASE_URL` 覆盖。在线模式不直接持有工具，文档检索、
-检测、来源追踪、授权和审计仍统一经过本地安全路径。详细语义见
+默认使用无需网络的确定性 Agent 和摘要器；在这种离线模式下模型不绑定工具，
+不会被注入诱导，也不会硬编码触发攻击动作——攻击用例如实记录为 not_attempted。
+设置 `DASHSCOPE_API_KEY` 后，可通过 `--mode dashscope` 使用阿里云百炼 Qwen：
+此时 `read_file` 和 `send_email` 作为工具绑定给在线模型，由模型根据文档内容
+**自主决定是否调用**。模型被欺骗就记录为真实攻击成功，模型拒绝就记录为攻击失败，
+不预设结果。默认使用低成本的 `qwen-flash`，可通过 `DASHSCOPE_MODEL` 修改；
+默认兼容接口地址可通过 `DASHSCOPE_BASE_URL` 覆盖。文档检索、检测、来源追踪、
+授权和审计仍统一经过本地安全路径。详细语义见
 [攻击防御闭环](./docs/attack_defense_flow.md)。
 
 首次使用在线模式时复制配置模板，并只在本地 `.env` 中填写密钥：
@@ -88,8 +92,11 @@ streamlit run app.py
 ```
 
 批量评测默认对固定数据集逐例运行 `off`、`detector_only` 和 `full`
-三种配置，并把真实指标与可复现元数据写入 `evaluation/results/`。数据集范围、
-指标口径和结果结构见 [固定评测说明](./docs/evaluation.md)。
+三种配置，并把真实指标与可复现元数据写入 `evaluation/results/`。
+`--agent-mode local`（默认）为离线 smoke，模型不绑定工具，攻击用例如实记录为
+not_attempted；`--agent-mode dashscope` 为在线评测，由 Qwen 自主决定是否调用工具，
+攻击成功率反映真实模型行为。数据集范围、指标口径和结果结构见
+[固定评测说明](./docs/evaluation.md)。
 
 攻击对照会向 `scenarios/outbox.json` 追加一封虚构邮件。重复演示前可将该文件
 恢复为空数组 `[]`；不会连接真实邮件服务。

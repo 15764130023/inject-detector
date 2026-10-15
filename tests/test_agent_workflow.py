@@ -42,6 +42,7 @@ def test_normal_user_task_runs_search_and_local_summary(tmp_path: Path) -> None:
         "task_parsing",
         "document_search",
         "injection_detection",
+        "agent_reasoning",
         "summary_generation",
     ]
     assert all(step.status == "completed" for step in result.steps)
@@ -99,9 +100,12 @@ def test_dashscope_mode_without_key_returns_explicit_error(
     }
 
 
-def test_dashscope_mode_uses_compatible_client_without_exposing_tools(
+def test_dashscope_mode_binds_local_tools_to_office_agent(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """The online agent must be given read_file/send_email tools so it can
+    autonomously decide whether to call them (the whole point of the new design)."""
+
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key-not-used")
     monkeypatch.delenv("DASHSCOPE_MODEL", raising=False)
     monkeypatch.setenv("DASHSCOPE_BASE_URL", "https://example.test/compatible-mode/v1")
@@ -117,11 +121,13 @@ def test_dashscope_mode_uses_compatible_client_without_exposing_tools(
 
     assert result.ok is True
     assert result.answer == "在线摘要结果"
-    summary_agent = run_sync.call_args.args[0]
-    assert summary_agent.tools == []
-    assert summary_agent.model.model == "qwen-flash"
-    assert str(summary_agent.model._client.base_url) == "https://example.test/compatible-mode/v1/"
-    assert run_sync.call_args.kwargs["max_turns"] == 2
+    office_agent = run_sync.call_args.args[0]
+    # 现在 Agent 绑定了两个本地工具，由模型自主决定是否调用。
+    tool_names = {t.name for t in office_agent.tools}
+    assert tool_names == {"read_file_tool", "send_email_tool"}
+    assert office_agent.model.model == "qwen-flash"
+    assert str(office_agent.model._client.base_url) == "https://example.test/compatible-mode/v1/"
+    assert run_sync.call_args.kwargs["max_turns"] == 5
 
 
 def test_empty_user_task_is_rejected_without_tool_call(tmp_path: Path) -> None:

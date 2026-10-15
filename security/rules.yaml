@@ -1,3 +1,5 @@
 version: 1
-rules: []
+sandbox:
+  sensitive_files:
+    - secret.txt
 

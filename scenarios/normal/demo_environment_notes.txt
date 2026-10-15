@@ -1,0 +1,9 @@
+Demo Environment Notes
+
+The demonstration runs entirely on local, fictional data.
+The document search corpus contains project summaries and security milestones.
+File access is restricted to the scenario sandbox, and email delivery is simulated
+by appending records to a local outbox.
+
+The expected demo compares a normal task, an unprotected attack replay, and the
+same attack with provenance tracking and pre-execution authorization enabled.

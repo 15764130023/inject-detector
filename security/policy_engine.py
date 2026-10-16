@@ -72,42 +72,73 @@ def _source_risk_context(
 ) -> tuple[tuple[str, ...], tuple[str, ...], str | None, float | None]:
     """Summarise trust and detector evidence for tool-argument sources."""
 
-    source_ids: set[str] = set()
+    confirmed_source_ids: set[str] = set()
+    candidate_source_ids: set[str] = set()
     untrusted = False
     for source in (argument_sources or {}).values():
         if not isinstance(source, Mapping):
             continue
         source_id = source.get("source_id")
         if isinstance(source_id, str) and source_id:
-            source_ids.add(source_id)
+            confirmed_source_ids.add(source_id)
         parent_source_id = source.get("parent_source_id")
         if isinstance(parent_source_id, str) and parent_source_id:
-            source_ids.add(parent_source_id)
+            confirmed_source_ids.add(parent_source_id)
+        raw_candidate_source_ids = source.get("candidate_source_ids", ())
+        if isinstance(raw_candidate_source_ids, (list, tuple, set, frozenset)):
+            candidate_source_ids.update(
+                item
+                for item in raw_candidate_source_ids
+                if isinstance(item, str) and item
+            )
         if source.get("trusted") is False:
             untrusted = True
 
-    highest_label: str | None = None
-    highest_score: float | None = None
     label_priority = {"SAFE": 0, "SUSPICIOUS": 1, "INJECTION": 2}
-    for source_id in source_ids:
-        raw_detection = (detection_results or {}).get(source_id)
-        if not isinstance(raw_detection, Mapping):
-            continue
-        raw_score = raw_detection.get("risk_score")
-        score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
-        label = str(raw_detection.get("label", "SAFE"))
-        if highest_score is None or score > highest_score:
-            highest_score = score
-        if label_priority.get(label, -1) > label_priority.get(highest_label or "", -1):
-            highest_label = label
+
+    def highest_detection(source_ids: set[str]) -> tuple[str | None, float | None]:
+        highest_label: str | None = None
+        highest_score: float | None = None
+        for source_id in source_ids:
+            raw_detection = (detection_results or {}).get(source_id)
+            if not isinstance(raw_detection, Mapping):
+                continue
+            raw_score = raw_detection.get("risk_score")
+            score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+            label = str(raw_detection.get("label", "SAFE"))
+            if highest_score is None or score > highest_score:
+                highest_score = score
+            if label_priority.get(label, -1) > label_priority.get(
+                highest_label or "", -1
+            ):
+                highest_label = label
+        return highest_label, highest_score
+
+    confirmed_label, confirmed_score = highest_detection(confirmed_source_ids)
+    candidate_label, candidate_score = highest_detection(candidate_source_ids)
+    highest_label = max(
+        (label for label in (confirmed_label, candidate_label) if label is not None),
+        key=lambda label: label_priority.get(label, -1),
+        default=None,
+    )
+    scores = [
+        score for score in (confirmed_score, candidate_score) if score is not None
+    ]
+    highest_score = max(scores, default=None)
 
     factors: list[str] = []
     if untrusted:
         factors.append("UNTRUSTED_ARGUMENT_SOURCE")
-    if highest_label == "SUSPICIOUS":
+    if confirmed_label == "SUSPICIOUS":
         factors.append("SUSPICIOUS_SOURCE_DETECTED")
-    elif highest_label == "INJECTION":
+    elif confirmed_label == "INJECTION":
         factors.append("INJECTION_SOURCE_DETECTED")
+    if candidate_label == "SUSPICIOUS":
+        factors.append("CANDIDATE_SUSPICIOUS_SOURCE_DETECTED")
+    elif candidate_label == "INJECTION":
+        factors.append("CANDIDATE_INJECTION_SOURCE_DETECTED")
+
+    source_ids = confirmed_source_ids | candidate_source_ids
     return tuple(factors), tuple(sorted(source_ids)), highest_label, highest_score
 
 
@@ -184,14 +215,27 @@ def evaluate_tool_request(
             sensitive = is_sensitive_path(normalised_path, rules_path or RULES_PATH)
         except ValueError as exc:
             return decide(BLOCK, str(exc), "POLICY_CONFIG_ERROR", "high")
-        if detection_label == "INJECTION":
+        if "INJECTION_SOURCE_DETECTED" in risk_factors:
             return decide(
                 BLOCK,
                 "文件参数来自已确认的提示注入来源。",
                 "INJECTION_SOURCE_HIGH_RISK_TOOL_BLOCKED",
                 "high",
             )
-        if sensitive and normalised_path.casefold() not in user_authorization.files:
+        explicitly_authorized = (
+            normalised_path.casefold() in user_authorization.files
+        )
+        if (
+            "CANDIDATE_INJECTION_SOURCE_DETECTED" in risk_factors
+            and not explicitly_authorized
+        ):
+            return decide(
+                BLOCK,
+                "文件参数的候选来源包含提示注入，且用户未明确授权读取该文件。",
+                "CANDIDATE_INJECTION_SOURCE_REQUIRE_EXPLICIT_AUTHORIZATION",
+                "high",
+            )
+        if sensitive and not explicitly_authorized:
             return decide(
                 BLOCK,
                 "用户未明确授权读取该敏感文件。",
@@ -200,7 +244,9 @@ def evaluate_tool_request(
             )
         return decide(
             ALLOW,
-            "文件位于沙箱内，且所需敏感文件授权已满足；不可信来源已提升风险等级。"
+            "文件位于沙箱内，且所需敏感文件授权已满足；候选来源风险已记录。"
+            if "CANDIDATE_INJECTION_SOURCE_DETECTED" in risk_factors
+            else "文件位于沙箱内，且所需敏感文件授权已满足；不可信来源已提升风险等级。"
             if "UNTRUSTED_ARGUMENT_SOURCE" in risk_factors
             else "文件位于沙箱内，且所需敏感文件授权已满足。",
             "FILE_SANDBOX_AND_AUTHORIZATION_VALID",
@@ -216,7 +262,7 @@ def evaluate_tool_request(
                 "EMAIL_RECIPIENT_REQUIRED",
                 "high",
             )
-        if detection_label == "INJECTION":
+        if "INJECTION_SOURCE_DETECTED" in risk_factors:
             return decide(
                 BLOCK,
                 "邮件参数来自已确认的提示注入来源。",
@@ -224,6 +270,13 @@ def evaluate_tool_request(
                 "high",
             )
         if recipient.strip().casefold() not in user_authorization.email_recipients:
+            if "CANDIDATE_INJECTION_SOURCE_DETECTED" in risk_factors:
+                return decide(
+                    BLOCK,
+                    "邮件参数的候选来源包含提示注入，且用户未明确授权该收件地址。",
+                    "CANDIDATE_INJECTION_SOURCE_REQUIRE_EXPLICIT_AUTHORIZATION",
+                    "high",
+                )
             return decide(
                 BLOCK,
                 "用户未明确授权向该地址发送邮件。",
@@ -232,7 +285,9 @@ def evaluate_tool_request(
             )
         return decide(
             ALLOW,
-            "收件地址与用户明确授权的地址一致。",
+            "收件地址与用户明确授权的地址一致；候选来源风险已记录。"
+            if "CANDIDATE_INJECTION_SOURCE_DETECTED" in risk_factors
+            else "收件地址与用户明确授权的地址一致。",
             "EMAIL_RECIPIENT_AUTHORIZED",
             "high",
         )

@@ -1,0 +1,5 @@
+生产环境部署手册
+
+部署流程：git pull → pip install -r requirements.txt → streamlit run app.py。
+健康检查：访问 http://localhost:8501，确认页面正常加载。
+回滚：git checkout 上一个 tag，重启服务。

@@ -26,6 +26,7 @@ def test_metrics_are_calculated_from_actual_run_records() -> None:
             "is_attack": True,
             "attack_succeeded": True,
             "attack_intercepted": False,
+            "attack_refused": False,
             "agent_ok": True,
             "latency_ms": 20.0,
         },
@@ -44,6 +45,7 @@ def test_metrics_are_calculated_from_actual_run_records() -> None:
             "is_attack": True,
             "attack_succeeded": False,
             "attack_intercepted": True,
+            "attack_refused": False,
             "agent_ok": True,
             "latency_ms": 24.0,
         },
@@ -53,6 +55,7 @@ def test_metrics_are_calculated_from_actual_run_records() -> None:
 
     assert metrics["by_protection_mode"]["off"]["attack_success_rate_percent"] == 100.0
     assert metrics["by_protection_mode"]["full"]["attack_interception_rate_percent"] == 100.0
+    assert metrics["by_protection_mode"]["full"]["attack_refusal_rate_percent"] == 0.0
     assert metrics["by_protection_mode"]["full"]["normal_task_completion_rate_percent"] == 100.0
     assert metrics["by_protection_mode"]["full"]["false_positive_rate_percent"] == 0.0
     assert metrics["full_vs_off_average_extra_latency_ms"] == 4.0
@@ -86,29 +89,73 @@ def test_dataset_rejects_duplicate_case_ids(tmp_path: Path) -> None:
 
 def test_full_fixed_evaluation_runs_three_configs_without_touching_real_outbox(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = Path(__file__).resolve().parents[1]
     real_outbox = project_root / "scenarios" / "outbox.json"
     original_outbox = real_outbox.read_bytes()
     output_path = tmp_path / "report.json"
 
-    # 离线 local smoke：确定性摘要器不绑定工具，攻击用例不会被真实触发。
-    # 真实攻击成功率需要用 --agent-mode dashscope 在线运行。
+    # mock 掉在线模型调用，只验证 runner 的编排与指标计算逻辑。
+    import json as _json
+    _ds = _json.loads(DEFAULT_DATASET_PATH.read_text(encoding="utf-8"))
+    all_paths = sorted({p for c in _ds["cases"] for p in c["expected_documents"]})
+    all_docs = [{"relative_path": p} for p in all_paths]
+
+    fake_provenance = [
+        {"source_type": "system_prompt"},
+        {"source_type": "user_input"},
+        {"source_type": "tool_result"},
+        {"source_type": "retrieved_document"},
+    ]
+
+    class _FakeResult:
+        def __init__(self, *, ok: bool, attack_outcome: str, answer: str = "摘要"):
+            self.ok = ok
+            self.answer = answer
+            self.mode = "dashscope"
+            self.protection_mode = "full"
+            self.scenario = "normal"
+            self.trace_id = "test-trace"
+            self.user_task = ""
+            self.search_query = ""
+            self.documents = all_docs
+            self.detections = []
+            self.provenance = fake_provenance
+            self.tool_calls = []
+            self.attack_outcome = attack_outcome
+            self.steps = []
+            self.error = None
+
+        def to_dict(self):
+            return {"ok": self.ok, "answer": self.answer, "attack_outcome": self.attack_outcome}
+
+    def _fake_run_office_task(task, *, mode, protection_mode, scenario, **kw):
+        return _FakeResult(ok=True, attack_outcome="not_attempted")
+
+    monkeypatch.setattr("evaluation.runner.run_office_task", _fake_run_office_task)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+
     report, written_path = run_evaluation(
         dataset_path=DEFAULT_DATASET_PATH,
         output_path=output_path,
-        agent_mode="local",
+        agent_mode="dashscope",
     )
 
     assert written_path == output_path
     assert output_path.exists()
-    assert report["dataset"]["case_count"] == 9
+    assert report["dataset"]["case_count"] == 6
     assert len(report["dataset"]["corpus_sha256"]) == 64
-    assert len(report["dataset"]["document_sha256"]) == 9
-    assert len(report["runs"]) == 27
-    assert report["runtime"]["agent_mode"] == "local"
-    # 离线 smoke 下：模型不调用工具，攻击成功率与拦截率都如实为 0%——
-    # 这不是防护有效，而是离线模型根本没有机会被注入。
+    assert len(report["dataset"]["document_sha256"]) == 70
+    assert len(report["runs"]) == 18
+    assert report["runtime"]["agent_mode"] == "dashscope"
+    assert report["runtime"]["model"]["name"] == "qwen-flash"
+    assert report["runtime"]["detector"] == {
+        "id": "offline_rules_v1",
+        "suspicious_threshold": 0.3,
+        "injection_threshold": 0.65,
+    }
+    # mock 下：攻击用例 not_attempted，正常用例 succeeded。
     for mode in ("off", "detector_only", "full"):
         assert report["metrics"]["by_protection_mode"][mode][
             "attack_success_rate_percent"
@@ -125,7 +172,7 @@ def test_full_fixed_evaluation_runs_three_configs_without_touching_real_outbox(
     full_attack = next(
         run
         for run in report["runs"]
-        if run["case_id"] == "attack_injected_project_plan_zh"
+        if run["case_id"] == "attack_q4_delivery"
         and run["protection_mode"] == "full"
     )
     source_types = {source["source_type"] for source in full_attack["provenance"]}

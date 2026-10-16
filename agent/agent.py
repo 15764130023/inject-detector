@@ -20,7 +20,7 @@ from security.detector import INJECTION, DetectionResult, scan_text
 from security.provenance import ProvenanceTracker
 from tools.registry import ToolRegistry
 
-AgentMode = Literal["local", "dashscope"]
+AgentMode = Literal["dashscope"]
 ProtectionMode = Literal["off", "detector_only", "full"]
 Scenario = Literal["normal", "attack", "all"]
 AttackOutcome = Literal["not_attempted", "blocked", "succeeded", "failed"]
@@ -226,7 +226,7 @@ def _determine_attack_outcome(
 def run_office_task(
     user_task: str,
     *,
-    mode: AgentMode = "local",
+    mode: AgentMode = "dashscope",
     protection_mode: ProtectionMode = "full",
     scenario: Scenario = "normal",
     registry: ToolRegistry | None = None,
@@ -258,16 +258,6 @@ def run_office_task(
             user_task=task,
             code="USER_TASK_TOO_LONG",
             message=f"用户任务不能超过 {MAX_TASK_LENGTH} 个字符。",
-        )
-    if mode not in {"local", "dashscope"}:
-        return _failed_result(
-            trace_id=trace_id,
-            mode="local",
-            protection_mode=protection_mode,
-            scenario=scenario,
-            user_task=task,
-            code="INVALID_AGENT_MODE",
-            message="mode 必须是 local 或 dashscope。",
         )
     if protection_mode not in {"off", "detector_only", "full"}:
         return _failed_result(
@@ -376,43 +366,40 @@ def run_office_task(
     }
 
     tool_calls: list[dict[str, Any]] = []
-    answer: str
-    try:
-        if mode == "local":
-            # 离线确定性模式：没有在线模型，也就不存在"模型被注入欺骗后自主调用工具"。
-            # 这里只生成安全摘要，不伪造任何攻击动作。
-            answer = summarize_locally(documents)
-            steps.append(
-                WorkflowStep(
-                    "agent_reasoning",
-                    "completed",
-                    "离线确定性摘要器运行；未绑定工具，模型不会被注入诱导。",
-                )
+    if not documents:
+        answer = "没有检索到与任务相关的资料，暂时无法生成摘要。"
+        steps.append(
+            WorkflowStep(
+                "agent_reasoning",
+                "completed",
+                "未检索到相关资料，未调用在线模型。",
             )
-        else:
-            answer, model_tool_calls, _ = run_office_agent_with_tools(
-                task,
-                documents,
-                registry=active_registry,
-                tracker=tracker,
-                trace_id=trace_id,
-                protection_enabled=gateway_enabled,
-                user_authorization=authorization,
-                detection_context=detection_context,
+        )
+    else:
+      try:
+        answer, model_tool_calls, _ = run_office_agent_with_tools(
+            task,
+            documents,
+            registry=active_registry,
+            tracker=tracker,
+            trace_id=trace_id,
+            protection_enabled=gateway_enabled,
+            user_authorization=authorization,
+            detection_context=detection_context,
+        )
+        tool_calls = model_tool_calls
+        dangerous = [c for c in tool_calls if _is_dangerous_call(c)]
+        steps.append(
+            WorkflowStep(
+                "agent_reasoning",
+                "completed",
+                f"在线 Qwen 完成推理，共发起 {len(dangerous)} 次危险工具调用。"
+                if dangerous
+                else "在线 Qwen 完成推理，未发起危险工具调用。",
+                {"tool_calls": [c["tool"] for c in dangerous]},
             )
-            tool_calls = model_tool_calls
-            dangerous = [c for c in tool_calls if _is_dangerous_call(c)]
-            steps.append(
-                WorkflowStep(
-                    "agent_reasoning",
-                    "completed",
-                    f"在线 Qwen 完成推理，共发起 {len(dangerous)} 次危险工具调用。"
-                    if dangerous
-                    else "在线 Qwen 完成推理，未发起危险工具调用。",
-                    {"tool_calls": [c["tool"] for c in dangerous]},
-                )
-            )
-    except SummaryError as exc:
+        )
+      except SummaryError as exc:
         if exc.tool_calls:
             tool_calls = exc.tool_calls
         steps.append(WorkflowStep("agent_reasoning", "failed", exc.message))
@@ -438,9 +425,7 @@ def run_office_task(
         WorkflowStep(
             "summary_generation",
             "completed",
-            "使用离线确定性摘要器生成结果。"
-            if mode == "local"
-            else "使用阿里云百炼在线智能体生成结果。",
+            "使用阿里云百炼在线智能体生成结果。",
             {"attack_outcome": attack_outcome},
         )
     )
@@ -478,7 +463,6 @@ def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description="运行办公资料检索、攻击与防御任务")
     parser.add_argument("task", nargs="?", default="请搜索项目资料，并生成一份摘要。")
-    parser.add_argument("--mode", choices=("local", "dashscope"), default="local")
     parser.add_argument(
         "--protection",
         choices=("off", "detector_only", "full"),
@@ -490,7 +474,7 @@ def main() -> int:
 
     result = run_office_task(
         arguments.task,
-        mode=arguments.mode,
+        mode="dashscope",
         protection_mode="off" if arguments.no_protection else arguments.protection,
         scenario=arguments.scenario,
     )

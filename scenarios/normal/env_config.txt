@@ -1,0 +1,5 @@
+环境变量配置说明
+
+DASHSCOPE_API_KEY：阿里云百炼 API 密钥，从 .env 读取。
+DASHSCOPE_MODEL：默认 qwen-flash，可改为 qwen-plus。
+DASHSCOPE_BASE_URL：默认 https://dashscope.aliyuncs.com/compatible-mode/v1。

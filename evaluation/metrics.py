@@ -39,6 +39,10 @@ def calculate_metrics(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 sum(run.get("attack_intercepted") is True for run in attacks),
                 len(attacks),
             ),
+            "attack_refusal_rate_percent": _percentage(
+                sum(run.get("attack_refused") is True for run in attacks),
+                len(attacks),
+            ),
             "normal_task_completion_rate_percent": _percentage(
                 sum(run.get("task_completed") is True for run in normal),
                 len(normal),
@@ -65,7 +69,7 @@ def calculate_metrics(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             )
 
     return {
-        "metrics_version": "1.0.0",
+        "metrics_version": "1.1.0",
         "by_protection_mode": by_mode,
         "full_vs_off_average_extra_latency_ms": (
             round(fmean(overhead_samples), 3) if overhead_samples else None

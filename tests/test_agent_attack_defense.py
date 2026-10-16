@@ -65,30 +65,6 @@ def _run_attack(registry: ToolRegistry, protection_mode: str, mode: str = "local
 
 
 # ---------------------------------------------------------------------------
-# local (offline deterministic) mode: no model, no tool calls, no fabricated attack.
-# ---------------------------------------------------------------------------
-
-
-def test_local_mode_does_not_fabricate_attack_actions(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Offline deterministic summarizer must not call read_file/send_email on its own."""
-
-    registry, outbox_path, _ = _configure_agent_environment(tmp_path, monkeypatch)
-
-    for protection_mode in ("off", "detector_only", "full"):
-        result = _run_attack(registry, protection_mode, mode="local")
-        assert result.ok is True, result.error
-        # 离线摘要器不会被注入诱导，也不会硬编码触发攻击动作。
-        assert result.attack_outcome == "not_attempted"
-        assert result.tool_calls == []
-        assert "DEMO-SECRET-ONLY" not in result.answer
-        assert "attacker@example.com" not in result.answer
-    # 发件箱从头到尾没有被写入。
-    assert json.loads(outbox_path.read_text(encoding="utf-8")) == []
-
-
-# ---------------------------------------------------------------------------
 # dashscope mode: mock the online agent so we can control whether the model
 # "chooses" to call dangerous tools, and verify the policy gateway behaves.
 # ---------------------------------------------------------------------------
@@ -102,9 +78,11 @@ def _mock_agent_calls_injection(task, documents, *, registry, tracker, trace_id,
     tool_calls = []
 
     read_arguments = {"path": "secret.txt"}
+    candidate_source_ids = ["user_task", *[doc["source_id"] for doc in documents]]
     read_sources = {
         "path": {"source_id": "model_inferred", "source_type": "model_inference",
-                 "trusted": False}
+                 "trusted": False, "attribution": "mixed_or_unknown",
+                 "candidate_source_ids": candidate_source_ids}
     }
     read_result = registry.invoke(
         "read_file", read_arguments, trace_id=trace_id,
@@ -123,7 +101,8 @@ def _mock_agent_calls_injection(task, documents, *, registry, tracker, trace_id,
     }
     email_sources = {
         name: {"source_id": "model_inferred", "source_type": "model_inference",
-               "trusted": False}
+               "trusted": False, "attribution": "mixed_or_unknown",
+               "candidate_source_ids": candidate_source_ids}
         for name in email_arguments
     }
     email_result = registry.invoke(
@@ -272,16 +251,19 @@ def test_full_defense_blocks_calls_before_side_effect(
     assert result.attack_outcome == "blocked"
     assert [call["tool"] for call in result.tool_calls] == ["read_file", "send_email"]
     assert all(call["result"]["error"]["code"] == "TOOL_BLOCKED" for call in result.tool_calls)
-    # 模型推理出的参数来源标记为 model_inferred（不可信），但策略引擎无法直接把它
-    # 关联到某份具体文档的检测结果；纵深防御的第二条路——敏感文件/收件人未获用户
-    # 显式授权——仍然独立阻断了调用。
+    # 参数仍标记为 mixed_or_unknown，不伪造确定归因；候选来源中的检测结果会进入
+    # 策略风险上下文，并与用户显式授权规则共同决定是否执行。
     policy_ids = [
         call["result"]["meta"]["policy"]["policy_id"] for call in result.tool_calls
     ]
     assert policy_ids == [
-        "SENSITIVE_FILE_REQUIRE_EXPLICIT_AUTHORIZATION",
-        "EMAIL_REQUIRE_EXPLICIT_AUTHORIZATION",
+        "CANDIDATE_INJECTION_SOURCE_REQUIRE_EXPLICIT_AUTHORIZATION",
+        "CANDIDATE_INJECTION_SOURCE_REQUIRE_EXPLICIT_AUTHORIZATION",
     ]
+    for call in result.tool_calls:
+        policy = call["result"]["meta"]["policy"]
+        assert "CANDIDATE_INJECTION_SOURCE_DETECTED" in policy["risk_factors"]
+        assert policy["max_detection_label"] == "INJECTION"
     assert json.loads(outbox_path.read_text(encoding="utf-8")) == []
 
     events = [
@@ -398,6 +380,10 @@ def test_partial_tool_calls_survive_online_agent_failure(
 
 def test_normal_task_finishes_without_dangerous_calls(tmp_path: Path, monkeypatch) -> None:
     registry, outbox_path, _ = _configure_agent_environment(tmp_path, monkeypatch)
+
+    def _safe_model(task, documents, **kwargs):
+        return "正常摘要，没有调用危险工具。", [], []
+    monkeypatch.setattr("agent.agent.run_office_agent_with_tools", _safe_model)
 
     result = run_office_task(
         "请搜索项目计划，并生成摘要。",

@@ -1,0 +1,6 @@
+交付物清单
+
+源代码：GitHub 仓库。
+技术文档：项目计划书 + docs/ 目录。
+演示系统：Streamlit 页面。
+评测报告：evaluation/output/。

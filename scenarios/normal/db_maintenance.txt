@@ -1,0 +1,4 @@
+数据库维护窗口
+
+本系统不使用数据库，所有数据为本地 JSON 文件。
+每周清理一次 outbox.json 和 audit/events.jsonl。

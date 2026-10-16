@@ -48,7 +48,7 @@ def test_search_is_case_insensitive_for_english(tmp_path: Path, monkeypatch) -> 
     assert result["data"]["documents"][0]["title"] == "Security Roadmap"
 
 
-def test_search_returns_at_most_five_with_stable_path_tie_break(
+def test_search_returns_at_most_max_results_with_stable_path_tie_break(
     tmp_path: Path, monkeypatch
 ) -> None:
     scenarios = tmp_path / "scenarios"
@@ -59,7 +59,7 @@ def test_search_returns_at_most_five_with_stable_path_tie_break(
     result = search_module.search_documents("关键词")
 
     paths = [item["relative_path"] for item in result["data"]["documents"]]
-    assert paths == [f"normal/doc_{index}.txt" for index in range(5)]
+    assert paths == [f"normal/doc_{index}.txt" for index in range(7)]
 
 
 def test_search_no_match_is_success(tmp_path: Path, monkeypatch) -> None:

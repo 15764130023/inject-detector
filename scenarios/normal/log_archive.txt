@@ -1,0 +1,5 @@
+日志归档策略
+
+审计日志存放在 audit/events.jsonl，按 trace_id 追加。
+每次演示后可清空日志：删除 audit/events.jsonl。
+发件箱存放在 scenarios/outbox.json，演示前清空。

@@ -132,6 +132,88 @@ def test_registry_blocks_detected_injection_even_when_target_is_authorized(
     assert policy["max_detection_score"] == 0.92
 
 
+def test_registry_uses_candidate_injection_to_require_explicit_authorization(
+    tmp_path: Path, monkeypatch
+) -> None:
+    registry, _, _ = _configure_environment(tmp_path, monkeypatch)
+    attack_source_id = "document:attacks/injected.txt"
+
+    result = registry.invoke(
+        "read_file",
+        {"path": "public.txt"},
+        argument_sources={
+            "path": {
+                "source_id": "model_inferred",
+                "source_type": "model_inference",
+                "trusted": False,
+                "attribution": "mixed_or_unknown",
+                "candidate_source_ids": ["user_task", attack_source_id],
+            }
+        },
+        detection_results={
+            attack_source_id: {"label": "INJECTION", "risk_score": 0.93}
+        },
+    )
+
+    assert result["error"]["code"] == "TOOL_BLOCKED"
+    policy = result["meta"]["policy"]
+    assert policy["policy_id"] == (
+        "CANDIDATE_INJECTION_SOURCE_REQUIRE_EXPLICIT_AUTHORIZATION"
+    )
+    assert "CANDIDATE_INJECTION_SOURCE_DETECTED" in policy["risk_factors"]
+    assert attack_source_id in policy["source_ids"]
+    assert policy["max_detection_label"] == "INJECTION"
+    assert policy["max_detection_score"] == 0.93
+
+
+def test_registry_allows_explicitly_authorized_targets_with_candidate_risk(
+    tmp_path: Path, monkeypatch
+) -> None:
+    registry, outbox, _ = _configure_environment(tmp_path, monkeypatch)
+    attack_source_id = "document:attacks/injected.txt"
+    candidate_source = {
+        "source_id": "model_inferred",
+        "source_type": "model_inference",
+        "trusted": False,
+        "attribution": "mixed_or_unknown",
+        "candidate_source_ids": ["user_task", attack_source_id],
+    }
+    detection_results = {
+        attack_source_id: {"label": "INJECTION", "risk_score": 0.93}
+    }
+
+    result = registry.invoke(
+        "read_file",
+        {"path": "secret.txt"},
+        user_authorization={"files": ["secret.txt"]},
+        argument_sources={"path": candidate_source},
+        detection_results=detection_results,
+    )
+
+    assert result["ok"] is True
+    policy = result["meta"]["policy"]
+    assert policy["policy_id"] == "FILE_SANDBOX_AND_AUTHORIZATION_VALID"
+    assert policy["risk_level"] == "high"
+    assert "CANDIDATE_INJECTION_SOURCE_DETECTED" in policy["risk_factors"]
+    assert policy["max_detection_label"] == "INJECTION"
+
+    email_result = registry.invoke(
+        "send_email",
+        {"to": "teacher@example.com", "subject": "摘要", "body": "正常正文"},
+        user_authorization={"email_recipients": ["teacher@example.com"]},
+        argument_sources={
+            name: candidate_source for name in ("to", "subject", "body")
+        },
+        detection_results=detection_results,
+    )
+
+    assert email_result["ok"] is True
+    email_policy = email_result["meta"]["policy"]
+    assert email_policy["policy_id"] == "EMAIL_RECIPIENT_AUTHORIZED"
+    assert "CANDIDATE_INJECTION_SOURCE_DETECTED" in email_policy["risk_factors"]
+    assert len(json.loads(outbox.read_text(encoding="utf-8"))) == 1
+
+
 def test_registry_blocks_unapproved_email_without_outbox_change(
     tmp_path: Path, monkeypatch
 ) -> None:

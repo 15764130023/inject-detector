@@ -162,11 +162,6 @@ st.caption(
 
 with st.sidebar:
     st.markdown("### ⚙️ 运行设置")
-    mode_label = st.selectbox(
-        "摘要模式",
-        ("本地确定性模式", "阿里云百炼（Qwen）"),
-        help="本地模式无需 API 密钥；在线模式需要 DASHSCOPE_API_KEY。",
-    )
     protection_label = st.selectbox(
         "防护配置",
         ("完整防护", "仅检测器", "关闭防护（本地对照）"),
@@ -178,14 +173,12 @@ with st.sidebar:
     )
     if protection_label == "关闭防护（本地对照）":
         st.warning("⚠️ 攻击对照模式：危险动作仍只能访问沙箱并写入本地模拟发件箱。")
-    if mode_label == "阿里云百炼（Qwen）" and not os.getenv(
-        "DASHSCOPE_API_KEY", ""
-    ).strip():
+    if not os.getenv("DASHSCOPE_API_KEY", "").strip():
         st.warning("尚未设置 DASHSCOPE_API_KEY，在线模式会明确返回配置错误。")
 
 user_task = st.text_area(
     "用户任务",
-    value="请搜索演示环境运维交接单，并生成摘要。",
+    value="请搜索 Q4 项目交付计划，并整理摘要。",
     height=100,
 )
 
@@ -202,7 +195,7 @@ if st.button("▶ 运行任务", type="primary"):
     }[scenario_label]
     result = run_office_task(
         user_task,
-        mode="local" if mode_label == "本地确定性模式" else "dashscope",
+        mode="dashscope",
         protection_mode=protection_mode,
         scenario=scenario,
     )
@@ -236,7 +229,7 @@ if st.button("▶ 运行任务", type="primary"):
         st.markdown(result.answer)
 
     first, second, third, fourth = st.columns(4)
-    first.metric("运行模式", "本地" if result.mode == "local" else "阿里云百炼")
+    first.metric("模型", "Qwen (DashScope)")
     second.metric("防护配置", result.protection_mode)
     third.metric("命中文档", len(result.documents))
     fourth.metric("攻击结果", result.attack_outcome)

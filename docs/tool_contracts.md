@@ -4,8 +4,9 @@
 
 `argument_sources` 按参数记录 `source_id`、`source_type`、`trusted` 和可选的
 `parent_source_id`。模型无法确定单一直接来源时，还会记录
-`attribution=mixed_or_unknown` 与 `candidate_source_ids`；候选来源只用于审计说明，
-不会被策略当作已经确认的注入来源。参数确实包含先前工具返回的完整内容时，
+`attribution=mixed_or_unknown` 与 `candidate_source_ids`；候选来源参与风险聚合，
+但不会被策略当作已经确认的直接来源。候选中存在注入来源时，高风险调用必须满足用户对
+具体目标的显式授权。参数确实包含先前工具返回的完整内容时，
 `source_id` 指向对应的 `tool_result:<call_id>`。`detection_results` 按
 `source_id` 提供检测标签与分数。
 策略决定会回传 `risk_factors`、`source_ids`、`max_detection_label` 和
@@ -58,6 +59,7 @@ registry.invoke(
 - `security/rules.yaml` 的 `sandbox.sensitive_files` 显式列出敏感路径。
 - 开启防护后，敏感文件必须同时出现在用户授权的 `files` 中。
 - 参数来自不可信来源时提升为高风险；来源已确认为注入时，在读取前直接阻断。
+- 候选来源命中注入时，未授权敏感读取会阻断；具体文件已获明确授权时记录风险后放行。
 
 ## `send_email`
 
@@ -73,6 +75,7 @@ registry.invoke(
 - 主题最长 200 字符，正文最长 10,000 字符。
 - 开启防护后，收件地址必须与用户明确授权地址一致。
 - 来源已确认为注入时，即使地址碰巧在授权集合中也不会执行该次文档驱动调用。
+- 候选来源命中注入但没有确定归因时，未授权地址会阻断；明确授权地址记录风险后可放行。
 - 工具不访问网络，只向 `scenarios/outbox.json` 原子追加 `sent_simulated` 记录。
 
 ## 防护开关

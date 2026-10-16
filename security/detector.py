@@ -9,6 +9,9 @@ from time import perf_counter
 SAFE = "SAFE"
 SUSPICIOUS = "SUSPICIOUS"
 INJECTION = "INJECTION"
+DETECTOR_ID = "offline_rules_v1"
+SUSPICIOUS_THRESHOLD = 0.30
+INJECTION_THRESHOLD = 0.65
 
 
 @dataclass(frozen=True)
@@ -18,7 +21,7 @@ class DetectionResult:
     risk_score: float
     reasons: tuple[str, ...]
     latency_ms: float
-    detector_id: str = "offline_rules_v1"
+    detector_id: str = DETECTOR_ID
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -69,9 +72,9 @@ def scan_text(text: str, *, source_id: str) -> DetectionResult:
             score += weight
             reasons.append(reason)
     score = min(round(score, 4), 1.0)
-    if score >= 0.65:
+    if score >= INJECTION_THRESHOLD:
         label = INJECTION
-    elif score >= 0.30:
+    elif score >= SUSPICIOUS_THRESHOLD:
         label = SUSPICIOUS
     else:
         label = SAFE

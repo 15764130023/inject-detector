@@ -203,7 +203,8 @@ def run_office_agent_with_tools(
     ]
 
     # 模型可能同时参考用户任务、多份文档和之前的工具结果。没有可靠证据时，
-    # 不把参数强行归因到某一份攻击文档；候选来源只用于审计说明，不作为已确认来源。
+    # 不把参数强行归因到某一份攻击文档；策略会把候选来源作为风险证据，
+    # 但不会把它们误记为参数的已确认直接来源。
     tracker.add_source("model_inferred", "model_inference", trusted=False)
 
     def _model_sources(**arguments: str) -> dict[str, dict[str, Any]]:

@@ -1,0 +1,5 @@
+安全补丁说明
+
+Python 依赖每月更新一次：pip install --upgrade。
+Streamlit 版本锁定在 requirements.txt 指定范围。
+不引入未经验证的新依赖。

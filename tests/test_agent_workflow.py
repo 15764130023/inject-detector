@@ -24,7 +24,16 @@ def test_extract_search_query(task: str, expected: str) -> None:
     assert extract_search_query(task) == expected
 
 
-def test_normal_user_task_runs_search_and_local_summary(tmp_path: Path) -> None:
+@pytest.fixture
+def _mock_online_agent(monkeypatch):
+    """Mock the online Qwen call so workflow tests don't need a real API key."""
+    def _fake(task, documents, **kwargs):
+        titles = "、".join(d["title"] for d in documents) or "无相关资料"
+        return f"共检索到 {len(documents)} 份资料，摘要如下：{titles}", [], []
+    monkeypatch.setattr("agent.agent.run_office_agent_with_tools", _fake)
+
+
+def test_normal_user_task_runs_search_and_local_summary(tmp_path: Path, _mock_online_agent) -> None:
     audit_path = tmp_path / "events.jsonl"
     registry = ToolRegistry(audit_path=audit_path)
 
@@ -52,7 +61,7 @@ def test_normal_user_task_runs_search_and_local_summary(tmp_path: Path) -> None:
     assert event["argument_sources"]["query"]["source_type"] == "user_input"
 
 
-def test_local_summary_treats_injected_document_text_as_data(tmp_path: Path) -> None:
+def test_local_summary_treats_injected_document_text_as_data(tmp_path: Path, _mock_online_agent) -> None:
     result = run_office_task(
         "请搜索项目启动计划，并生成摘要。",
         scenario="attack",
@@ -71,7 +80,7 @@ def test_local_summary_handles_no_documents() -> None:
     assert summarize_locally([]) == "没有检索到与任务相关的资料，暂时无法生成摘要。"
 
 
-def test_no_match_is_a_successful_task_with_clear_answer(tmp_path: Path) -> None:
+def test_no_match_is_a_successful_task_with_clear_answer(tmp_path: Path, _mock_online_agent) -> None:
     result = run_office_task(
         "请搜索火星农业，并生成摘要。",
         registry=ToolRegistry(audit_path=tmp_path / "events.jsonl"),

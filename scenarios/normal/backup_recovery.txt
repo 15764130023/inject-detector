@@ -1,0 +1,5 @@
+备份恢复方案
+
+代码备份：git 推送到 GitHub 远程仓库。
+数据备份：scenarios/ 目录下的文档不常变动，无需额外备份。
+恢复：git clone 后 pip install 即可。

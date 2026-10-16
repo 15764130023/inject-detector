@@ -12,7 +12,7 @@ TOOL_NAME = "search_documents"
 SCENARIOS_ROOT = Path(__file__).resolve().parents[1] / "scenarios"
 SEARCH_DIRECTORIES = ("normal", "attacks")
 ALLOWED_EXTENSIONS = {".md", ".txt"}
-MAX_RESULTS = 5
+MAX_RESULTS = 20
 MAX_QUERY_LENGTH = 200
 MAX_DOCUMENT_BYTES = 256 * 1024
 

@@ -13,7 +13,31 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-没有 API 密钥时，项目应使用本地模拟模式，且不会读取真实敏感文件或发送真实邮件。
+防护模式首次扫描时，LLM Guard 会从 Hugging Face 下载固定 revision 的
+`protectai/deberta-v3-base-prompt-injection-v2`，之后复用本机缓存。若依赖、网络或
+模型缓存不可用，系统会报告 `DETECTOR_UNAVAILABLE`，不会静默退回规则检测并伪装成
+LLM Guard 结果。关闭防护的隔离对照模式不会加载检测模型。
+
+没有 API 密钥时，页面可以打开，但在线任务会明确报告配置失败。
+
+## Windows 免安装程序
+
+发布文件为 `dist/PromptInjectDefense.exe`，只需复制该文件并双击。
+首次在页面左侧填写密钥；任务运行仍需要联网。密钥和运行记录自动保存在
+`%LOCALAPPDATA%\PromptInjectDefense`，不写入 exe 所在目录。
+详细说明见 [Windows 使用说明](docs/windows_usage.md)。
+
+构建环境使用 Python 3.11 Windows x64：
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm PromptInjectDefense.spec
+```
+
+构建采用显式资源白名单，不复制 `.env`、历史审计或模拟发件箱。
+使用 PyInstaller 6.22.0（GPL-2.0 附打包分发例外，少量文件 Apache-2.0），
+仅复用打包工具和官方 hooks，未修改第三方代码；启动入口、配置保存与
+资源选择为本项目实现。许可依据见 [官方说明](https://pyinstaller.org/en/stable/license.html)。
 
 也可以直接在命令行运行完整闭环：
 
@@ -42,6 +66,13 @@ python -m agent.agent "请搜索项目启动计划，并生成摘要。" --scena
 授权和审计仍统一经过本地安全路径。缺少密钥、网络中断或模型服务异常会明确报错，
 不会用本地确定性脚本伪造攻击动作或评测结果。详细语义见
 [攻击防御闭环](./docs/attack_defense_flow.md)。
+
+注入检测正式复用 LLM Guard 0.3.16 的 `PromptInjection` 扫描器（MIT License），
+阈值固定为 0.5，并保留项目自有规则作为中文与显式工具诱导的补充。上游仓库已在
+2026-07-09 归档且模型不再维护，因此版本、模型 ID 与 revision 均写入评测元数据；
+这是一项已知供应链风险，不将该组件描述为持续维护中的通用防护方案。
+模型权重采用 Apache-2.0；模型卡只声明英文能力，因此所有文本仍会扫描，但对中文占主导
+的文档不让英文模型分数单独升级标签，由补充规则给出有效标签，降低已实测的中文误报。
 
 首次使用在线模式时复制配置模板，并只在本地 `.env` 中填写密钥：
 

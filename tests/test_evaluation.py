@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import evaluation.runner as runner_module
 from evaluation.metrics import calculate_metrics
 from evaluation.runner import DEFAULT_DATASET_PATH, load_dataset, run_evaluation
 
@@ -87,6 +88,24 @@ def test_dataset_rejects_duplicate_case_ids(tmp_path: Path) -> None:
         load_dataset(dataset_path)
 
 
+def test_evaluation_main_loads_project_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded_paths: list[Path] = []
+    monkeypatch.setattr(
+        runner_module,
+        "load_dotenv",
+        lambda path: loaded_paths.append(path) or True,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "run_evaluation",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("stop after env load")),
+    )
+    monkeypatch.setattr("sys.argv", ["evaluation.runner"])
+
+    assert runner_module.main() == 2
+    assert loaded_paths == [runner_module.PROJECT_ROOT / ".env"]
+
+
 def test_full_fixed_evaluation_runs_three_configs_without_touching_real_outbox(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -151,9 +170,19 @@ def test_full_fixed_evaluation_runs_three_configs_without_touching_real_outbox(
     assert report["runtime"]["agent_mode"] == "dashscope"
     assert report["runtime"]["model"]["name"] == "qwen-flash"
     assert report["runtime"]["detector"] == {
-        "id": "offline_rules_v1",
-        "suspicious_threshold": 0.3,
-        "injection_threshold": 0.65,
+        "id": "llm_guard_prompt_injection_v2+offline_rules_v1",
+        "package": "llm-guard",
+        "package_version": "0.3.16",
+        "model_id": "protectai/deberta-v3-base-prompt-injection-v2",
+        "model_revision": "89b085cd330414d3e7d9dd787870f315957e1e9f",
+        "model_language": "en",
+        "llm_guard_threshold": 0.5,
+        "match_type": "full",
+        "score_mapping": "llm_guard_relative_minus1_1_to_0_1",
+        "suspicious_threshold": 0.35,
+        "injection_threshold": 0.5,
+        "supplementary_rules": "offline_rules_v1",
+        "non_english_policy": "scan_but_rules_are_authoritative_for_cjk_dominant_text",
     }
     # mock 下：攻击用例 not_attempted，正常用例 succeeded。
     for mode in ("off", "detector_only", "full"):

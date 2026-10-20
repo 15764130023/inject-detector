@@ -9,6 +9,7 @@ import pytest
 
 from agent.agent import extract_search_query, run_office_task
 from agent.llm_client import summarize_locally
+from security.detector import DetectorUnavailableError
 from tools.registry import ToolRegistry
 
 
@@ -156,6 +157,35 @@ def test_dashscope_runtime_error_is_reported_without_masking(
         "code": "DASHSCOPE_AGENT_ERROR",
         "message": "在线智能体运行失败：executor stopped",
     }
+
+
+def test_detector_environment_failure_is_reported_and_audited(
+    tmp_path: Path, monkeypatch
+) -> None:
+    audit_path = tmp_path / "events.jsonl"
+    monkeypatch.setattr(
+        "agent.agent.scan_text",
+        lambda text, *, source_id: (_ for _ in ()).throw(
+            DetectorUnavailableError("模型缓存不可用")
+        ),
+    )
+
+    result = run_office_task(
+        "请搜索项目资料，并生成摘要。",
+        registry=ToolRegistry(audit_path=audit_path),
+        trace_id="detector-failure",
+    )
+
+    assert result.ok is False
+    assert result.error == {
+        "code": "DETECTOR_UNAVAILABLE",
+        "message": "模型缓存不可用",
+    }
+    events = [
+        json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[-1]["event_type"] == "detector_environment_failure"
+    assert events[-1]["code"] == "DETECTOR_UNAVAILABLE"
 
 
 def test_empty_user_task_is_rejected_without_tool_call(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from audit.logger import append_event
+from desktop_config import application_root
 from security.policy_engine import (
     ALLOW,
     PolicyDecision,
@@ -21,7 +22,7 @@ from tools.search_documents import search_documents
 from tools.send_email import send_email
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_AUDIT_PATH = PROJECT_ROOT / "audit" / "events.jsonl"
+DEFAULT_AUDIT_PATH = application_root() / "audit" / "events.jsonl"
 
 
 @dataclass(frozen=True)

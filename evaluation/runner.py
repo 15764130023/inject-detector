@@ -16,16 +16,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterable, Mapping
 
+from dotenv import load_dotenv
+
 import tools.send_email as email_module
 from agent.agent import run_office_task
 from agent.llm_client import DEFAULT_DASHSCOPE_BASE_URL, DEFAULT_DASHSCOPE_MODEL
 from evaluation.metrics import calculate_metrics
-from security.detector import (
-    DETECTOR_ID,
-    INJECTION_THRESHOLD,
-    SAFE,
-    SUSPICIOUS_THRESHOLD,
-)
+from security.detector import SAFE, detector_metadata
 from tools.registry import ToolRegistry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -381,11 +378,7 @@ def run_evaluation(
                 "base_url": os.getenv("DASHSCOPE_BASE_URL", "").strip()
                 or DEFAULT_DASHSCOPE_BASE_URL,
             },
-            "detector": {
-                "id": DETECTOR_ID,
-                "suspicious_threshold": SUSPICIOUS_THRESHOLD,
-                "injection_threshold": INJECTION_THRESHOLD,
-            },
+            "detector": detector_metadata(),
             "python_version": platform.python_version(),
             "platform": platform.platform(),
             "protection_modes": list(modes),
@@ -434,6 +427,7 @@ def _print_summary(report: Mapping[str, Any], output_path: Path) -> None:
 
 
 def main() -> int:
+    load_dotenv(PROJECT_ROOT / ".env")
     parser = argparse.ArgumentParser(description="运行办公智能体三档安全评测")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--output", type=Path)

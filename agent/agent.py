@@ -16,7 +16,12 @@ from agent.llm_client import (
     run_office_agent_with_tools,
     summarize_locally,
 )
-from security.detector import INJECTION, DetectionResult, scan_text
+from security.detector import (
+    INJECTION,
+    DetectionResult,
+    DetectorUnavailableError,
+    scan_text,
+)
 from security.provenance import ProvenanceTracker
 from tools.registry import ToolRegistry
 
@@ -346,11 +351,34 @@ def run_office_task(
     detection_objects: list[DetectionResult] = []
     detections: list[dict[str, object]] = []
     if protection_mode != "off":
-        detection_objects, detections = _scan_documents(
-            documents,
-            registry=active_registry,
-            trace_id=trace_id,
-        )
+        try:
+            detection_objects, detections = _scan_documents(
+                documents,
+                registry=active_registry,
+                trace_id=trace_id,
+            )
+        except DetectorUnavailableError as exc:
+            steps.append(
+                WorkflowStep("injection_detection", "failed", str(exc))
+            )
+            active_registry.record_event(
+                trace_id,
+                "detector_environment_failure",
+                {"code": "DETECTOR_UNAVAILABLE", "message": str(exc)},
+            )
+            return _failed_result(
+                trace_id=trace_id,
+                mode=mode,
+                protection_mode=protection_mode,
+                scenario=scenario,
+                user_task=task,
+                search_query=query,
+                documents=documents,
+                provenance=tracker.snapshot(),
+                steps=steps,
+                code="DETECTOR_UNAVAILABLE",
+                message=str(exc),
+            )
         highest_score = max((result.risk_score for result in detection_objects), default=0.0)
         steps.append(
             WorkflowStep(

@@ -12,9 +12,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from tools.common import ToolResult, failure, success
+from desktop_config import application_root
 
 TOOL_NAME = "send_email"
-OUTBOX_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "outbox.json"
+OUTBOX_PATH = application_root() / "scenarios" / "outbox.json"
 MAX_ADDRESS_LENGTH = 254
 MAX_SUBJECT_LENGTH = 200
 MAX_BODY_LENGTH = 10_000

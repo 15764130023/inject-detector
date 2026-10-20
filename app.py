@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 
 import streamlit as st
-from dotenv import load_dotenv
+from desktop_config import load_configuration, save_api_key
 
 from agent.agent import run_office_task
 from audit.logger import load_events
 from tools.registry import DEFAULT_AUDIT_PATH
 from tools.send_email import load_outbox
 
-load_dotenv()
+load_configuration()
 
 st.set_page_config(
     page_title="Prompt Inject Defense",
@@ -31,9 +31,9 @@ st.markdown(
     background: radial-gradient(ellipse at top, #0f1a2e 0%, #070b14 60%, #04060c 100%);
     color: #c9d6e8;
 }
-/* 隐藏默认 header 和右上角 Deploy/菜单 */
+/* 保留侧栏展开控件，仅隐藏右上角 Deploy/菜单 */
 header[data-testid="stHeader"] { background: transparent; }
-[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stAppDeployButton"] { display: none !important; }
 [data-testid="stMainMenu"] { display: none !important; }
 /* 主标题 */
 h1, h2, h3 {
@@ -162,6 +162,18 @@ st.caption(
 
 with st.sidebar:
     st.markdown("### ⚙️ 运行设置")
+    with st.expander("在线模型密钥", expanded=not bool(os.getenv("DASHSCOPE_API_KEY", "").strip())):
+        st.caption("密钥明文保存在本机配置目录的 .env 中，请妥善保管。")
+        with st.form("api_key_settings", clear_on_submit=True):
+            api_key_input = st.text_input("百炼 API 密钥", type="password")
+            save_key = st.form_submit_button("保存密钥")
+        if save_key:
+            try:
+                save_api_key(api_key_input)
+            except (OSError, ValueError):
+                st.error("保存失败：请检查密钥是否为空、包含空白字符，以及本机配置目录是否可写。")
+            else:
+                st.success("已保存到本机；运行任务时将验证连接。")
     protection_label = st.selectbox(
         "防护配置",
         ("完整防护", "仅检测器", "关闭防护（本地对照）"),

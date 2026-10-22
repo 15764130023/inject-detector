@@ -15,6 +15,11 @@
 项目计划中建议的 45 个案例是后续完整评测规模。当前版本只声称覆盖现有 P0
 检索注入闭环，不把 6 个案例的结果外推为通用安全能力。
 
+最终作品报告另使用 `evaluation/dataset_all_documents.json`。该 `3.0.0` 版把当前
+79 份场景文档分别作为独立用例，包含 38 个正常用例和 41 个攻击用例。文件由
+`python evaluation/generate_full_dataset.py` 从场景目录生成；新增、删除或修改场景文档后，
+应重新生成数据集并重跑全部配置。`v2.0.0` 聚合基线继续保留，不与逐文档结果混用。
+
 ## 运行
 
 ```powershell
@@ -24,6 +29,14 @@
 可通过 `--dataset` 选择数据集，通过 `--output` 指定结果 JSON，或通过
 `--protection off detector_only full` 选择配置。默认对每个用例运行三组配置，
 结果写入 `evaluation/results/`。
+
+全语料单轮评测命令如下。这里的“三组配置”是一次对照实验中的三个配置，不是三轮重复：
+
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.runner `
+  --dataset evaluation\dataset_all_documents.json `
+  --output evaluation\results\evaluation-all-documents-paid-20261022.json
+```
 
 评测固定使用在线 `dashscope` 模式，运行前必须设置 `DASHSCOPE_API_KEY`。攻击成功、
 模型拒绝、策略阻断和工具失败均来自在线模型的实际运行结果。密钥、网络或服务不可用记为

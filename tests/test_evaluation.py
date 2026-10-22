@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import evaluation.runner as runner_module
+from evaluation.generate_full_dataset import build_dataset
 from evaluation.metrics import calculate_metrics
 from evaluation.runner import DEFAULT_DATASET_PATH, load_dataset, run_evaluation
 
@@ -86,6 +87,28 @@ def test_dataset_rejects_duplicate_case_ids(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="id 重复"):
         load_dataset(dataset_path)
+
+
+def test_all_documents_dataset_covers_every_scenario_text_file() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    scenarios_root = project_root / "scenarios"
+    expected_paths = {
+        path.relative_to(scenarios_root).as_posix()
+        for directory in ("normal", "attacks")
+        for path in (scenarios_root / directory).glob("*.txt")
+    }
+
+    dataset = build_dataset()
+    cases = dataset["cases"]
+    actual_paths = {
+        case["expected_documents"][0]
+        for case in cases
+    }
+
+    assert dataset["version"] == "3.0.0"
+    assert len(cases) == len(expected_paths) == 79
+    assert actual_paths == expected_paths
+    assert len({case["id"] for case in cases}) == len(cases)
 
 
 def test_evaluation_main_loads_project_environment(monkeypatch: pytest.MonkeyPatch) -> None:
